@@ -18,6 +18,8 @@ extern "C" {
 #define INITIAL_ETI_HEIGHT 315
 #define JUMP_VELOCITY 2
 #define FALL_VELOCITY 1
+#define IMMUNITY_TIME 500
+#define DASH_TIME 100
 
 
 // narysowanie napisu txt na powierzchni screen, zaczynaj¹c od punktu (x, y)
@@ -95,7 +97,7 @@ void DrawRectangle(SDL_Surface *screen, int x, int y, int l, int k,
 		DrawLine(screen, x + 1, i, l - 2, 1, 0, fillColor);
 	};
 
-void jump(double* etiHeight, int* isJumping, int* isFalling, int* jumper, int* jumpCounter)
+void jump(double* etiHeight, int* isJumping, int* isFalling, int* jumper, int* jumpCounter, int* isDashing, int*dashCounter)
 {
 	//jump/double jump handling, the height of the jump is bounded by the MAXJUMP constant
 	if (*etiHeight == MAXJUMP && *isJumping == 1)
@@ -115,7 +117,7 @@ void jump(double* etiHeight, int* isJumping, int* isFalling, int* jumper, int* j
 		*jumper = 0;
 	}
 
-	if (*isJumping == 0 && *etiHeight < INITIAL_ETI_HEIGHT)
+	if (*isJumping == 0  && *etiHeight < INITIAL_ETI_HEIGHT && *isDashing ==0)
 	{
 		*jumper-=1;
 		*etiHeight+=FALL_VELOCITY;
@@ -124,9 +126,79 @@ void jump(double* etiHeight, int* isJumping, int* isFalling, int* jumper, int* j
 	if (*etiHeight == INITIAL_ETI_HEIGHT) {
 		*isFalling = 0;
 		*jumpCounter = 0;
+		*dashCounter = 0;
 	}
 
 }
+
+
+void collision(double *distance, double *etiHeight, int *immunity, int *lives, int *immunityTime)
+{
+	//collision handling, this function should be used for every collidable element on the scene
+	if (ETI_LEFT_FIX > SCREEN_WIDTH - (*distance * SPEED_MULTIPLIER) && ETI_LEFT_FIX < 13 * SCREEN_WIDTH / 12 - (*distance * SPEED_MULTIPLIER) && *immunity == 0)
+	{
+		if (*etiHeight > 3 * SCREEN_HEIGHT / 4 - (SCREEN_HEIGHT / 8) && *etiHeight < 3 * SCREEN_HEIGHT / 4)
+		{
+			*immunity = 1;
+			*lives -= 1;
+			*immunityTime = IMMUNITY_TIME;
+		}
+	}
+	if (ETI_LEFT_FIX + ETI_WIDTH > SCREEN_WIDTH - (*distance * SPEED_MULTIPLIER) && ETI_LEFT_FIX + ETI_WIDTH < 13 * SCREEN_WIDTH / 12 - (*distance * SPEED_MULTIPLIER) && immunity == 0)
+	{
+		if (*etiHeight - ETI_HEIGHT > 3 * SCREEN_HEIGHT / 4 - (SCREEN_HEIGHT / 8) && *etiHeight - ETI_HEIGHT < 3 * SCREEN_HEIGHT / 4)
+		{
+			*immunity = 1;
+			*lives -= 1;
+			*immunityTime = IMMUNITY_TIME;
+		}
+	}
+
+}
+
+void immunityCheck(int *immunityTime, int *immunity)
+{
+	//handling immunity after hitting a collidable object
+	if (*immunityTime > 0)
+	{
+		*immunityTime -= 1;
+	}
+	else if (*immunityTime <= 0)
+	{
+		*immunity = 0;
+	}
+}
+
+void dash(int *isDashing, int* dashTime, int *speedChangeToken, int *isFalling, int *isJumping, double *etiSpeed, int *jumpCounter) {
+	if (*isDashing == 1 && *dashTime > 0)
+	{
+		if (*speedChangeToken == 0)
+		{
+			*etiSpeed *= 10;
+			*speedChangeToken = 1;
+		}
+		*dashTime -= 1;
+		*isFalling = 0;
+		*isJumping = 0;
+		*jumpCounter = 1;
+
+	}
+
+
+	if (*dashTime <= 0)
+	{
+		*isFalling = 1;
+		*isDashing = 0;
+		*speedChangeToken = 0;
+		*etiSpeed /= 10;
+		*dashTime = DASH_TIME;
+
+
+	}
+
+
+}
+
 
 
 // main
@@ -134,7 +206,7 @@ void jump(double* etiHeight, int* isJumping, int* isFalling, int* jumper, int* j
 extern "C"
 #endif
 int main(int argc, char **argv) {
-	int t1, t2, quit, frames, rc, isJumping, isFalling, jumper, controlMode, jumpCounter, lives;
+	int t1, t2, quit, frames, rc, isJumping, isFalling, jumper, controlMode, jumpCounter, lives, immunityTime, immunity,isDashing, dashCounter,dashTime,speedChangeToken;
 	double delta, worldTime, fpsTimer, fps, distance, etiSpeed, etiHeight;
 	SDL_Event event;
 	SDL_Surface *screen, *charset;
@@ -235,7 +307,12 @@ int main(int argc, char **argv) {
 	controlMode = 0;
 	jumpCounter = 0;
 	lives = 3;
-
+	immunity = 0;
+	immunityTime = 0;
+	isDashing = 0;
+	dashCounter = 0;
+	dashTime = DASH_TIME;
+	speedChangeToken = 0;
 	while(!quit) {
 		t2 = SDL_GetTicks();
 
@@ -245,24 +322,43 @@ int main(int argc, char **argv) {
 		// here t2-t1 is the time in milliseconds since
 		// the last screen was drawn
 		// delta is the same time in seconds
+
+		if (lives == 0)
+		{
+			SDL_FreeSurface(charset);
+			SDL_FreeSurface(screen);
+			SDL_DestroyTexture(scrtex);
+			SDL_DestroyRenderer(renderer);
+			SDL_DestroyWindow(window);
+
+			SDL_Quit();
+			return 0;
+		}
 		delta = (t2 - t1) * 0.001;
+
 		t1 = t2;
 
 		worldTime += delta;
-
+		
 		distance += etiSpeed * delta;
-		etiSpeed += delta / 10;
+		etiSpeed += delta / 10; //making world move faster relative to time passed
 		SDL_FillRect(screen, NULL, czarny);
 		if (distance * SPEED_MULTIPLIER > SCREEN_WIDTH) {
 			distance = 0;
 		}
 
-		
-		jump(&etiHeight, &isJumping, &isFalling, &jumper, &jumpCounter);
 
-		
+		jump(&etiHeight, &isJumping, &isFalling, &jumper, &jumpCounter, &isDashing, &dashCounter);
+
+		collision(&distance, &etiHeight, &immunity, &lives, &immunityTime);
+		immunityCheck(&immunityTime, &immunity);
+
+		dash(&isDashing, &dashTime, &speedChangeToken, &isFalling, &isJumping, &etiSpeed, &jumpCounter);
+
+
 		if (etiHeight < MAXJUMP && isJumping == 1 )
 		{
+			//this is to make sure that eti logo starts falling after hitting max height
 			isJumping = 0;
 			isFalling = 1;
 		}
@@ -272,21 +368,19 @@ int main(int argc, char **argv) {
 		DrawLine(screen, 0, 3*SCREEN_HEIGHT/4, SCREEN_WIDTH, 1, 0, niebieski);
 
 		DrawRectangle(screen, SCREEN_WIDTH - distance * SPEED_MULTIPLIER, 3*SCREEN_HEIGHT/4 - SCREEN_HEIGHT/8, SCREEN_WIDTH / 12, SCREEN_HEIGHT / 8, czerwony, czerwony);
-
 		fpsTimer += delta;
 		if(fpsTimer > 0.5) {
 			fps = frames * 2;
 			frames = 0;
 			fpsTimer -= 0.5;
 			};
-		xd
 		// tekst informacyjny / info text
 		DrawRectangle(screen, 4, 4, SCREEN_WIDTH - 8, 36, czerwony, niebieski);
 		//            "template for the second project, elapsed time = %.1lf s  %.0lf frames / s"
-		sprintf(text, "Szablon drugiego zadania, czas trwania = %.1lf s  %.0lf klatek / s", worldTime, fps);
+		sprintf(text, "lives = %d, elapsed time = %.1lf s  %.0lf fps",lives, worldTime, fps);
 		DrawString(screen, screen->w / 2 - strlen(text) * 8 / 2, 10, text, charset);
 		//	      "Esc - exit, \030 - faster, \031 - slower"
-		sprintf(text, "Esc - wyjscie, \030 - przyspieszenie, \031 - zwolnienie");
+		sprintf(text, "control mode = %d, \033 - accelerate, \032 - slow down", controlMode);
 		DrawString(screen, screen->w / 2 - strlen(text) * 8 / 2, 26, text, charset);
 
 		SDL_UpdateTexture(scrtex, NULL, screen->pixels, screen->pitch);
@@ -310,8 +404,16 @@ int main(int argc, char **argv) {
 						distance = 0;
 						etiSpeed = 1;
 					}
-					else if (event.key.keysym.sym == SDLK_UP) {
+					else if (event.key.keysym.sym == SDLK_UP && controlMode == 0) {
 						if (isJumping == 0 && jumper < MAXJUMP  && jumpCounter<2)
+						{
+							isJumping = 1;
+							isFalling = 0;
+							jumpCounter++;
+						}
+					}
+					else if (event.key.keysym.sym == SDLK_z && controlMode == 1) {
+						if (isJumping == 0 && jumper < MAXJUMP && jumpCounter < 2)
 						{
 							isJumping = 1;
 							isFalling = 0;
@@ -323,10 +425,17 @@ int main(int argc, char **argv) {
 						if (controlMode == 0) controlMode = 1;
 						else if (controlMode == 1) controlMode = 0;
 					}
+					else if (event.key.keysym.sym == SDLK_x)
+					{
+						if (dashCounter == 0)
+						{
+							isDashing = 1;
+							dashCounter = 1;
+						}
+					}
 					break;
 				case SDL_KEYUP:
 					isJumping = 0;
-					//etiSpeed = 1.0;
 					break;
 					
 				case SDL_QUIT:
