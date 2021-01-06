@@ -14,19 +14,28 @@ extern "C" {
 #define ETI_WIDTH 90
 #define SPEED_MULTIPLIER 100
 #define ETI_LEFT_FIX 100
-#define MAXJUMP 15
+#define JUMP_TIME 150
 #define INITIAL_ETI_HEIGHT 315
-#define JUMP_VELOCITY 3
+#define JUMP_VELOCITY 2
 #define FALL_VELOCITY 1
 #define IMMUNITY_TIME 500
 #define DASH_TIME 100
 #define LEVEL_WIDTH 3300
-#define LEVEL_HEIGHT 786
+#define LEVEL_HEIGHT 1272
 #define OBSTACLE_X 90
 #define OBSTACLE_Y 50
-const int surfaceHeights[5] = { INITIAL_ETI_HEIGHT, 140, 0, 0, 0 };
-const int surfaceX[3][2] = { {0,843},{843,2423}, {2423,3300} };
-const int obstaclesLocation[3][2] = { {304,315}, {1005,153}, {1900, 153}};
+#define OBSTACLES_AMOUNT 3
+#define STALACTITE_X 65
+#define STALACTITE_Y 145
+#define STALACTITES_AMOUNT 2
+#define X_OFFSET 440
+#define Y_OFFSET 410
+#define SURFACE_AMOUNT 6
+const int surfaceHeights[SURFACE_AMOUNT] = { INITIAL_ETI_HEIGHT, 155, -70, INITIAL_ETI_HEIGHT, 410, 325 };
+const int surfaceX[SURFACE_AMOUNT][2] = { {0,843},{843,2194}, {2423,3300}, {1500, 2206}, {1350,2012}, {2012,2311} };
+const int obstaclesLocation[OBSTACLES_AMOUNT][2] = { {304,315}, {1005,153}, {1900, 153}};
+const int stalactitesLocation[STALACTITES_AMOUNT][2] = { {1880,-170}, {2459,-170} };
+
 
 
 // narysowanie napisu txt na powierzchni screen, zaczynaj¹c od punktu (x, y)
@@ -104,25 +113,24 @@ void DrawRectangle(SDL_Surface *screen, int x, int y, int l, int k,
 		DrawLine(screen, x + 1, i, l - 2, 1, 0, fillColor);
 	};
 
-void jump(double* etiHeight, int* isJumping, int* isFalling, int* jumper, int* jumpCounter, int* isDashing, int*dashCounter)
+void jump(double* etiHeight, int* isJumping, int* isFalling, int* jumper, int* jumpCounter, int* isDashing)
 {
 	//jump/double jump handling, the height of the jump is bounded by the MAXJUMP constant
-	/*
-	if (*etiHeight == MAXJUMP && *isJumping == 1)
+	if (*isJumping == 1)
+	{
+		*isFalling = 0;
+	}
+	if (*jumper<=0)
 	{
 		*isJumping = 0;
 		*isFalling = 1;
+		*jumper = JUMP_TIME;
+		
 	}
-	*/
-	if (*isJumping == 1 && *jumper < MAXJUMP)
+	if (*isJumping == 1 && *jumper > 0)
 	{
-		*jumper+=1;
+		*jumper-=1;
 		*etiHeight -= JUMP_VELOCITY;
-	}
-	if (*jumper == MAXJUMP)
-	{
-		*isFalling = 1;
-		*jumper = 0;
 	}
 	
 	if (*isFalling ==1)
@@ -133,21 +141,30 @@ void jump(double* etiHeight, int* isJumping, int* isFalling, int* jumper, int* j
 	if (*isJumping == 0 && *isFalling == 0)
 	{
 		*jumpCounter = 0;
-		*dashCounter = 0;
+		*jumper = JUMP_TIME;
 	}
-
 }
 
 
-int collision(double *distance, double *etiHeight, int *lives)
+int collision(double *distance, double *etiHeight)
 {
-	for (int i = 0; i < 3; i++)
+	//returns 1 if collision with an obstacle occurs
+	for (int i = 0; i < OBSTACLES_AMOUNT; i++)
 	{
-		if (obstaclesLocation[i][0] >= *distance - OBSTACLE_X && obstaclesLocation[i][0] <= (*distance + OBSTACLE_X))
+		if (obstaclesLocation[i][0] >= (*distance - OBSTACLE_X) && obstaclesLocation[i][0] <= (*distance + OBSTACLE_X))
 		{
-			if (*etiHeight >= obstaclesLocation[i][1] && *etiHeight - OBSTACLE_Y <= obstaclesLocation[i][1])
+			if (*etiHeight >= obstaclesLocation[i][1] && (*etiHeight - OBSTACLE_Y) <= obstaclesLocation[i][1])
 			{
-				*lives -= 1;
+				return 1;
+			}
+		}
+	}
+	for (int i = 0; i < STALACTITES_AMOUNT; i++)
+	{
+		if (stalactitesLocation[i][0] >= (*distance - STALACTITE_X) && stalactitesLocation[i][0] <= (*distance + STALACTITE_X))
+		{
+			if (*etiHeight <= stalactitesLocation[i][1] && (*etiHeight - STALACTITE_Y) <= stalactitesLocation[i][1])
+			{
 				return 1;
 			}
 		}
@@ -156,7 +173,13 @@ int collision(double *distance, double *etiHeight, int *lives)
 }
 
 
-void dash(int *isDashing, int* dashTime, int *speedChangeToken, int *isFalling, int *isJumping, double *etiSpeed, int *jumpCounter) {
+void dash(int *isDashing, int* dashTime, int *speedChangeToken, int *isFalling, int *isJumping, double *etiSpeed, int *jumpCounter) 
+{
+	//this function makes the unicorn dash by momentarily multiplying its speed by 10 and stopping any falling
+	if (*isDashing == 1)
+	{
+		*isFalling = 0;
+	}
 	if (*isDashing == 1 && *dashTime > 0)
 	{
 		if (*speedChangeToken == 0)
@@ -174,40 +197,65 @@ void dash(int *isDashing, int* dashTime, int *speedChangeToken, int *isFalling, 
 		*isFalling = 1;
 		*isDashing = 0;
 		*speedChangeToken = 0;
-		*etiSpeed /= 10;
+		if (*etiSpeed >= 100) *etiSpeed /= 10;
 		*dashTime = DASH_TIME;
 	}
 }
 
-void falling(double* etiHeight, int distance, int* isFalling, int* isJumping)
+void falling(double* etiHeight, double distance, int* isFalling)
 {
-
-
-	if (distance <= surfaceX[0][1] && *etiHeight >= INITIAL_ETI_HEIGHT)
+	//this function is responsible for the unicorn staying on the platforms
+	if (distance <= surfaceX[0][1] && *etiHeight >= surfaceHeights[0])
 	{
 		*isFalling = 0;
 	}
-	else if (distance > surfaceX[1][0] && distance < surfaceX[1][1] && *etiHeight > 155)
+	if (distance <= surfaceX[0][1] && *etiHeight < surfaceHeights[0])
 	{
 		*isFalling = 1;
 	}
-	else if (distance > surfaceX[1][0] && distance < surfaceX[1][1] && *etiHeight <=155 && *etiHeight > 153)
+
+	if (distance > surfaceX[1][0] && distance < surfaceX[1][1])
 	{
-		*isFalling = 0;
+		if (*etiHeight == surfaceHeights[1]) *isFalling = 0;
+		else *isFalling = 1;
 	}
-	else if (distance >= surfaceX[2][0] && *etiHeight < INITIAL_ETI_HEIGHT)
+	if (distance >= surfaceX[2][0] - ETI_WIDTH && *etiHeight < surfaceHeights[3])
 	{
 		*isFalling = 1;
 	}
-	else if (distance >= surfaceX[2][0] && *etiHeight >=INITIAL_ETI_HEIGHT)
+	if (distance >= surfaceX[2][0] - ETI_WIDTH && *etiHeight >=surfaceHeights[3])
 	{
 		*isFalling = 0;
+	}
+	if (distance > surfaceX[3][0] - ETI_WIDTH && distance < surfaceX[3][1] + ETI_WIDTH)
+	{
+		if (*etiHeight == surfaceHeights[2]) *isFalling = 0;
+		else if(*etiHeight == surfaceHeights[1] && distance > surfaceX[1][0] && distance < surfaceX[1][1])* isFalling = 0;
+		else *isFalling = 1;
+	}
+	if (distance > surfaceX[4][0] -ETI_WIDTH && distance < surfaceX[4][1] + ETI_WIDTH)
+	{
+		if (*etiHeight == surfaceHeights[4]) *isFalling = 0;
+		else if (*etiHeight == surfaceHeights[2]) *isFalling = 0;
+		else if (*etiHeight == surfaceHeights[1] && distance > surfaceX[1][0] && distance < surfaceX[1][1])*isFalling = 0;
+		else *isFalling = 1;
+	}
+	if (distance > surfaceX[5][0] -ETI_WIDTH && distance < surfaceX[5][1] + ETI_WIDTH)
+	{
+		if (*etiHeight == surfaceHeights[5]) *isFalling = 0;
+		else if (*etiHeight == surfaceHeights[4]) *isFalling = 0;
+		else if (*etiHeight == surfaceHeights[2] && distance <surfaceX[3][1]) *isFalling = 0;
+		else if (*etiHeight == surfaceHeights[1] && distance > surfaceX[1][0] && distance < surfaceX[1][1])*isFalling = 0;
+		else *isFalling = 1;
 	}
 
 }
 
-void roundOver(int* frames, double* fpsTimer, double* fps, int* quit, double* worldTime, double* distance, double* etiSpeed, double* etiHeight)
+void roundOver(int* frames, double* fpsTimer, double* fps, int* quit, double* worldTime, double* distance, double* etiSpeed, double* etiHeight, int *jumper)
 {
+	//resetting gamestate values
+	//use this after player looses a life or clicks n
+	
 	*frames = 0;
 	*fpsTimer = 0;
 	*fps = 0;
@@ -216,20 +264,78 @@ void roundOver(int* frames, double* fpsTimer, double* fps, int* quit, double* wo
 	*distance = 0;
 	*etiSpeed = 300;
 	*etiHeight = INITIAL_ETI_HEIGHT;
+	*jumper = 0;
 }
 
 
-int inScreenCheck(double* etiHeight, int* lives)
+int inLevelCheck(double* etiHeight)
 {
+	//this function checks whether the unicorn is inside the acceptable height
 	if (*etiHeight > SCREEN_HEIGHT + ETI_HEIGHT)
 	{
-		*lives -= 1;
 		return 0;
 	}
 	else 
 	{
 		return 1;
 	}
+}
+
+void levelLoop(double* distance)
+{
+	if (*distance > LEVEL_WIDTH - SCREEN_WIDTH)
+	{
+		//this makes the level loop
+		*distance = 0;
+	}
+
+}
+void dashCounterReset(int *isFalling, int* isJumping, int* isDashing, int* dashCounter)
+{
+	if (*isFalling == 0 && *isJumping == 0 && *isDashing == 0)
+	{
+		*dashCounter = 0;
+	}
+}
+
+void topHit(double* distance, double* etiHeight, int* isFalling, int* isJumping)
+{
+	//this function is responsible for making the unicorn fall after hitting the bottom of a hanging surface
+	//2 and 4 to the height as i found it works better on small interval than on a fixed value
+	if (*distance > surfaceX[1][0] && *distance < surfaceX[1][1])
+	{
+		if (*etiHeight >= surfaceHeights[1] + ETI_HEIGHT+2 && *etiHeight <= surfaceHeights[1] + ETI_HEIGHT + 3)
+		{
+			*isFalling = 1;
+			*isJumping = 0;
+		}
+	}
+	if (*distance > surfaceX[3][0] && *distance < surfaceX[3][1])
+	{
+		if (*etiHeight >= surfaceHeights[2] + ETI_HEIGHT + 2 && *etiHeight <= surfaceHeights[2] + ETI_HEIGHT + 3)
+		{
+			*isFalling = 1;
+			*isJumping = 0;
+		}
+	}
+}
+
+int terrainCollision(double* distance, double* etiHeight)
+{
+	if (*distance > surfaceX[4][0] && *distance < surfaceX[4][1])
+	{
+		if (*etiHeight > surfaceHeights[4] + ETI_HEIGHT/2) return 1;
+	}
+	if (*distance >= surfaceX[2][0] - ETI_WIDTH/2 && *etiHeight > surfaceHeights[3] +ETI_HEIGHT/2)
+	{
+		return 1;
+	}
+	if (*distance > surfaceX[5][0] - ETI_WIDTH/2 && *distance < surfaceX[5][1])
+	{
+		if (*etiHeight > surfaceHeights[5] + ETI_HEIGHT/2) return 1;
+	}
+
+	return 0;
 }
 
 // main
@@ -245,12 +351,9 @@ int main(int argc, char **argv) {
 	SDL_Texture *scrtex;
 	SDL_Window *window;
 	SDL_Renderer *renderer;
-	SDL_Rect camera = { 0,0,640,480 };
-	SDL_Rect drawingRect = { 0,0,640,480 };
-	int y = 0;
-	//camera section of the code
+	
 
-	background = SDL_LoadBMP("background.bmp");
+	
 
 	// okno konsoli nie jest widoczne, je¿eli chcemy zobaczyæ
 	// komunikaty wypisywane printf-em trzeba w opcjach:
@@ -328,8 +431,8 @@ int main(int argc, char **argv) {
 	int czerwony = SDL_MapRGB(screen->format, 0xFF, 0x00, 0x00);
 	int niebieski = SDL_MapRGB(screen->format, 0x11, 0x11, 0xCC);
 
+	background = SDL_LoadBMP("bg.bmp");
 	t1 = SDL_GetTicks();
-
 	frames = 0;
 	fpsTimer = 0;
 	fps = 0;
@@ -339,7 +442,7 @@ int main(int argc, char **argv) {
 	etiSpeed = 300;
 	isJumping = 0;
 	isFalling = 0;
-	jumper = 0;
+	jumper = JUMP_TIME;
 	etiHeight = INITIAL_ETI_HEIGHT;
 	controlMode = 0;
 	jumpCounter = 0;
@@ -360,6 +463,7 @@ int main(int argc, char **argv) {
 
 		if (lives == 0)
 		{
+			//quit the program if the player has no lives available
 			SDL_FreeSurface(charset);
 			SDL_FreeSurface(screen);
 			SDL_DestroyTexture(scrtex);
@@ -369,12 +473,8 @@ int main(int argc, char **argv) {
 			SDL_Quit();
 			return 0;
 		}
-		//camera.y = etiHeight - SCREEN_HEIGHT/2;
 		
-	//	if (camera.y < 0)
-	//	{
-	//		camera.y = 0;
-	//	}
+		
 
 		delta = (t2 - t1) * 0.001;
 
@@ -384,47 +484,33 @@ int main(int argc, char **argv) {
 		
 		distance += etiSpeed * delta;
 		etiSpeed += delta ; //making world move faster relative to time passed
-		if (distance > LEVEL_WIDTH - SCREEN_WIDTH) {
-			distance = 0;
-		}
+		
+		levelLoop(&distance);
 
-		if (isFalling == 1 && isJumping == 0)
-		{
-			etiHeight += FALL_VELOCITY;
-		}
-
-		jump(&etiHeight, &isJumping, &isFalling, &jumper, &jumpCounter, &isDashing, &dashCounter);
-		falling(&etiHeight, distance, &isFalling, &isJumping);
-		if (isJumping == 1 && etiHeight < SCREEN_HEIGHT/2)
-		{
-			camera.y--;
-		}
-		if (isFalling == 1 && etiHeight < SCREEN_HEIGHT/2 )
-		{
-			camera.y++;
-		}
+		
+		
+		
 
 
 		dash(&isDashing, &dashTime, &speedChangeToken, &isFalling, &isJumping, &etiSpeed, &jumpCounter);
+		dashCounterReset(&isFalling, &isJumping, &isDashing, &dashCounter);
+		jump(&etiHeight, &isJumping, &isFalling, &jumper, &jumpCounter, &isDashing);
+		topHit(&distance, &etiHeight, &isFalling, &isJumping);
+		
+		falling(&etiHeight, distance, &isFalling);
+		
 
+		DrawSurface(screen, background, SCREEN_WIDTH*2 - distance + X_OFFSET, Y_OFFSET - etiHeight);
 
-		if (etiHeight < MAXJUMP && isJumping == 1 )
+		DrawSurface(screen, eti, ETI_LEFT_FIX, SCREEN_HEIGHT/2);
+		if (!inLevelCheck(&etiHeight) || collision(&distance, &etiHeight) || terrainCollision(&distance, &etiHeight))
 		{
-			//this is to make sure that eti logo starts falling after hitting max height
-			isJumping = 0;
-			isFalling = 1;
+			//this ends the round if the player collides with an obstacle or falls out of the screen
+			if(isDashing == 1) isDashing = 0; //this is to make sure the speed doesn't get decreased after dying while dashing
+			lives -= 1;
+			roundOver(&frames, &fpsTimer, &fps, &quit, &worldTime, &distance, &etiSpeed, &etiHeight, &jumper);
 		}
 
-
-		DrawSurface(screen, background, SCREEN_WIDTH*2 - distance + 440, 130);
-
-		DrawSurface(screen, eti, ETI_LEFT_FIX, etiHeight);
-		if (!inScreenCheck(&etiHeight, &lives) || collision(&distance, &etiHeight, &lives))
-		{
-			roundOver(&frames, &fpsTimer, &fps, &quit, &worldTime, &distance, &etiSpeed, &etiHeight);
-		}
-
-		drawingRect.y = etiHeight - camera.y;
 
 		fpsTimer += delta;
 		if(fpsTimer > 0.5) {
@@ -435,21 +521,16 @@ int main(int argc, char **argv) {
 		// tekst informacyjny / info text
 		DrawRectangle(screen, 4, 4, SCREEN_WIDTH - 8, 36, czerwony, niebieski);
 		//            "template for the second project, elapsed time = %.1lf s  %.0lf frames / s"
-		sprintf(text, "lives = %d, elapsed time = %.1lf s  %.0lf fps",lives, worldTime, fps);
+		sprintf(text, "lives = %f, elapsed time = %.1lf s  %.0lf fps",etiHeight, worldTime, fps);
 		DrawString(screen, screen->w / 2 - strlen(text) * 8 / 2, 10, text, charset);
 		//	      "Esc - exit, \030 - faster, \031 - slower"
-		sprintf(text, "control mode = %d, \033 - accelerate, \032 - slow down", controlMode);
+		sprintf(text, "control mode = %d, \033 - accelerate, \032 - slow down", isJumping);
 		DrawString(screen, screen->w / 2 - strlen(text) * 8 / 2, 26, text, charset);
-
-		camera.x = distance - SCREEN_WIDTH / 2;
-		camera.y = etiHeight;
-
-		if (camera.x < 0) camera.x = 0;
-		if (camera.y < 0) camera.y = 0;
 		
 		SDL_UpdateTexture(scrtex, NULL, screen->pixels, screen->pitch);
 //		SDL_RenderClear(renderer);
-		SDL_RenderCopy(renderer, scrtex, NULL, &drawingRect);
+
+		SDL_RenderCopy(renderer, scrtex, NULL, NULL);
 		SDL_RenderPresent(renderer);
 		// obs³uga zdarzeñ (o ile jakieœ zasz³y) / handling of events (if there were any)
 		while(SDL_PollEvent(&event)) {
@@ -459,22 +540,24 @@ int main(int argc, char **argv) {
 					else if(event.key.keysym.sym == SDLK_RIGHT) etiSpeed *= 2.0;
 					else if(event.key.keysym.sym == SDLK_LEFT) etiSpeed *= 0.3;
 					else if (event.key.keysym.sym == SDLK_n) {
-						roundOver(&frames, &fpsTimer, &fps, &quit, &worldTime, &distance, &etiSpeed, &etiHeight);
+						roundOver(&frames, &fpsTimer, &fps, &quit, &worldTime, &distance, &etiSpeed, &etiHeight,&jumper);
 					}
 					else if (event.key.keysym.sym == SDLK_UP && controlMode == 0) {
-						if (isJumping == 0 && jumper < MAXJUMP  && jumpCounter<2)
+						if (isJumping == 0 && jumper >= 0  && jumpCounter<2)
 						{
 							isJumping = 1;
 							isFalling = 0;
 							jumpCounter++;
+							jumper = 150;
 						}
 					}
 					else if (event.key.keysym.sym == SDLK_z && controlMode == 1) {
-						if (isJumping == 0 && jumper < MAXJUMP && jumpCounter < 2)
+						if (isJumping == 0 && jumper >= 0 && jumpCounter < 2)
 						{
 							isJumping = 1;
 							isFalling = 0;
 							jumpCounter++;
+							jumper = 150;
 						}
 					}
 					else if (event.key.keysym.sym == SDLK_d)
@@ -500,7 +583,9 @@ int main(int argc, char **argv) {
 					break;
 				};
 			};
+		
 		frames++;
+		
 		};
 
 	// zwolnienie powierzchni / freeing all surfaces
@@ -509,7 +594,6 @@ int main(int argc, char **argv) {
 	SDL_DestroyTexture(scrtex);
 	SDL_DestroyRenderer(renderer);
 	SDL_DestroyWindow(window);
-
 	SDL_Quit();
 	return 0;
 	};
